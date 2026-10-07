@@ -35,6 +35,9 @@ Role definitions are stored in the `roles` table and enforced via backend middle
 - **Cryptography & Security**:
   - Hashing: Node.js native `crypto.createHash('sha256')`.
   - Storage Encryption: AES-256-GCM envelope encryption with per-file 256-bit symmetric keys wrapped by a master key (`MASTER_ENCRYPTION_KEY`).
+  - Field-Level Database Encryption: Row-bound AES-256-GCM column encryption using HKDF subkey derivation (`DATA_ENCRYPTION_KEY`), storing payload as `enc:v1:<iv>:<tag>:<ciphertext>`.
+  - Blind Index Search: HMAC-SHA256 deterministic hashes (`BLIND_INDEX_KEY`) for exact-match lookups on encrypted columns (`employee_id_bidx`, `email_bidx`).
+  - Audit Log Hash Chain: Cryptographic SHA-256 blockchain-style chaining (`prev_hash`, `entry_hash`, `hash_version`), with dual-version verification across migration checkpoints.
   - Integrity Auditing: Automated periodic 60s cron (`node-cron` alternative via native timer loop) and on-demand verification.
 - **Document Generation**: PDFKit (v0.20.2) for deterministic, vector-based PDF evidence dossiers and forensic reports.
 - **Notification Services**: Nodemailer (v10.0.13) for SMTP-based critical intrusion alerts with non-blocking graceful fallback.
@@ -189,6 +192,8 @@ DB_PASSWORD=your_db_password
 JWT_SECRET=your_jwt_secret_key_here
 JWT_EXPIRES_IN=7d
 MASTER_ENCRYPTION_KEY=64_character_hex_string_32_bytes_here
+DATA_ENCRYPTION_KEY=64_character_hex_string_32_bytes_here
+BLIND_INDEX_KEY=64_character_hex_string_32_bytes_here
 
 # Optional: SMTP Email Alerts
 SMTP_HOST=smtp.gmail.com
@@ -199,7 +204,7 @@ SYSTEM_ADMIN_EMAIL=admin@police.gov
 SMTP_FROM="Digital Evidence Vault" <no-reply@police.gov>
 ```
 
-> **Generating Master Encryption Key**:  
+> **Generating 32-Byte Cryptographic Hex Keys**:  
 > Run: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
 
 ### 3. Database Initialization
@@ -241,7 +246,8 @@ npm run dev
 | **Decrypt Evidence** | **Done** | `backend/src/routes/evidenceRoutes.js`<br>`backend/src/services/evidenceService.js`<br>`backend/src/controllers/evidenceController.js`<br>`backend/src/utils/encryption.js`<br>`backend/src/utils/mimeHelper.js` | Restricted to Roles 1 (Admin) & 4 (Analyst). Unwraps per-file key, decrypts stream, verifies GCM auth tag and post-decryption SHA-256 match, strips Multer timestamp prefix, maps MIME type by extension, exposes Content-Disposition via CORS, and streams original bytes back without plaintext remaining on server. |
 | **Legacy Evidence Download** | **Done** | `backend/src/routes/evidenceRoutes.js`<br>`backend/src/services/evidenceService.js`<br>`backend/src/controllers/evidenceController.js`<br>`backend/src/utils/mimeHelper.js`<br>`frontend/src/AppRoot.jsx`<br>`frontend/src/components/ForensicSuite.jsx` | Authenticated download for legacy unencrypted exhibits. Restricted to Roles 1 (Admin) & 4 (Analyst). Verifies physical disk presence, recomputes SHA-256 before serving (422 on mismatch), strips timestamp prefix, streams MIME payload with Content-Disposition, and writes `LEGACY_FILE_DOWNLOAD` audit log. Catalog seed exhibits (1–3) return 404 without disk search. |
 | **Chain of Custody** | **Done** | `backend/src/routes/custodyRoutes.js`<br>`backend/src/controllers/custodyController.js`<br>`backend/src/services/custodyService.js`<br>`frontend/src/AppRoot.jsx` | Append-only custody logs, evidence transfers from user to user with mandatory action & remarks, historical timeline view. |
-| **Forensic Audit Logs** | **Done** | `backend/src/routes/auditRoutes.js`<br>`backend/src/controllers/auditController.js`<br>`backend/src/services/auditService.js`<br>`frontend/src/AppRoot.jsx` | Logs every action (`LOGIN`, `UPLOAD`, `VERIFY`, `DECRYPT`, `TRANSFER`). Searchable, filterable by action, card layout. |
+| **Forensic Audit Logs** | **Done** | `backend/src/routes/auditRoutes.js`<br>`backend/src/controllers/auditController.js`<br>`backend/src/services/auditService.js`<br>`frontend/src/AppRoot.jsx` | Logs every action (`LOGIN`, `UPLOAD`, `VERIFY`, `DECRYPT`, `TRANSFER`). Searchable, filterable by action, card layout. Cryptographically chained (`prev_hash`, `entry_hash`, `hash_version`). |
+| **Field-Level DB Encryption** | **Done** | `backend/src/utils/fieldEncryption.js`<br>`backend/src/utils/migrateFieldEncryption.js`<br>`backend/src/models/*` | AES-256-GCM column encryption using HKDF subkeys (`DATA_ENCRYPTION_KEY`) across 8 tables. Deterministic HMAC-SHA256 blind indexing (`BLIND_INDEX_KEY`) for exact-match lookups. Zero plaintext leaked to DB-only actors. |
 | **Autonomous Integrity Scanner** | **Done** | `backend/src/cron/integrityScheduler.js`<br>`backend/src/services/alertService.js`<br>`backend/src/models/alertModel.js` | Native timer daemon running every 60s. Scans all physical encrypted files, flags missing files or hash corruptions, creates active alerts. Recognizes catalog-only seed exhibits (`EV-2026-001` to `003`) via `is_legacy_seed: true` database flag as `LEGACY_SEED` to prevent spurious alerts without relying on description text matching. |
 | **Tamper Alert Center** | **Done** | `backend/src/routes/alertRoutes.js`<br>`backend/src/controllers/alertController.js`<br>`frontend/src/components/AlertCenter.jsx` | Dashboard showing active hash mismatches, manual trigger button for scans, alert resolution modal with audit notes, unconfigured email warnings banner, and test email trigger. |
 | **Email Intrusion Alerts** | **Done** | `backend/src/services/emailService.js`<br>`backend/src/services/alertService.js`<br>`backend/src/utils/demoTamperAlert.js` | Nodemailer SMTP alerts sent to Admin upon critical tampering detection. When SMTP is unconfigured and `DEMO_MAIL` is not set, suppresses delivery, logs clear error, and writes `SYSTEM_WARNING` audit log. Falls back to Ethereal sandbox with preview URLs only when `DEMO_MAIL=true`. |
@@ -478,6 +484,15 @@ The PostgreSQL database (`database/schema.sql`) consists of 9 normalized tables:
 
 ## 9. Changelog
 
+- **2026-10-08**:
+  - **Field-Level Database Encryption & Blind Indexing Live Migration**:
+    - Architected and implemented field-level AES-256-GCM database encryption across 8 sensitive tables (`users`, `cases`, `evidence`, `custody_logs`, `audit_logs`, `tamper_alerts`, `forensic_reports`, `autopsy_records`), preventing database-only administrators or compromised SQL dumps from reading sensitive PII, case titles, evidence descriptions, or forensic reports.
+    - Implemented HKDF per-table-and-column key derivation (`DATA_ENCRYPTION_KEY` + table name salt + column name info) generating isolated 256-bit subkeys. Stored ciphertext formatted as `enc:v1:<iv_b64>:<tag_b64>:<ciphertext_b64>`.
+    - Added HMAC-SHA256 blind indexing (`BLIND_INDEX_KEY`) on `employee_id_bidx` and `email_bidx` to allow fast, indexed exact-match queries without exposing plaintext values.
+    - Engineered dual-version audit log hash chain migration (`hash_version: 1` plaintext rule for legacy rows, `hash_version: 2` ciphertext rule for new rows) linked by a signed `MIGRATION_CHECKPOINT` record (`audit_id #305`), ensuring end-to-end chain verification across both eras without rewriting historical records.
+    - Executed live migration on production database (`digital_evidence_db`) with automated pre-flight `pg_dump` backup. Verified 554 sensitive values with 100% round-trip match (0 mismatches) and verified audit log chain across all 290 records.
+    - Preserved fallback `old_*` columns in database awaiting manual administrative drop confirmation.
+    - Verified all 4 RBAC user roles, logins, evidence listing, decryption on EV-2026-011, forensic reports, autopsy authorization, audit logs, alerts, signed manifests, and tamper detection with 100% pass rate.
 - **2026-10-07**:
   - **Alert Center Tamper Banner Removal**:
     - Added a single configurable toggle `const SHOW_TAMPER_BANNER = false;` at the top of [`frontend/src/components/AlertCenter.jsx`](file:///c:/Users/vrind/project_mini_mca/dig_evi/frontend/src/components/AlertCenter.jsx) to hide the large red "CRITICAL FILE TAMPERING DETECTED ... Re-Scan Vault" banner without leaving any empty layout gap or container element across desktop (1440px), tablet (1024px), and mobile (390px) viewports.
