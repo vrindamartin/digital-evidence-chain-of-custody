@@ -43,10 +43,15 @@ frontend/dist/
 frontend/dist-ssr/
 
 # =============================================================================
-# Logs & Diagnostic Files
+# Logs & Diagnostic Files & Database Backups
 # =============================================================================
 logs/
 *.log
+backups/
+*.dump
+*.backup
+*.sql
+*.sql.bak
 scratch/
 npm-debug.log*
 yarn-debug.log*
