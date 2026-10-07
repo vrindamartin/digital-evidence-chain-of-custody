@@ -1,4 +1,34 @@
 const pool = require("../config/db");
+const { encryptField, decryptField, computeBlindIndex } = require("../utils/fieldEncryption");
+
+const decryptAlertRow = (row) => {
+    if (!row) return row;
+    const alert_id = row.alert_id;
+    return {
+        ...row,
+        message: (typeof row.message === "string" && row.message.startsWith("v1:"))
+            ? decryptField("tamper_alerts", "message", alert_id, row.message)
+            : row.message,
+        email_last_error: (typeof row.email_last_error === "string" && row.email_last_error.startsWith("v1:"))
+            ? decryptField("tamper_alerts", "email_last_error", alert_id, row.email_last_error)
+            : row.email_last_error,
+        file_path: (typeof row.file_path === "string" && row.file_path.startsWith("v1:"))
+            ? decryptField("tamper_alerts", "file_path", alert_id, row.file_path)
+            : row.file_path,
+        resolution_notes: (typeof row.resolution_notes === "string" && row.resolution_notes.startsWith("v1:"))
+            ? decryptField("tamper_alerts", "resolution_notes", alert_id, row.resolution_notes)
+            : row.resolution_notes,
+        evidence_name: (typeof row.evidence_name === "string" && row.evidence_name.startsWith("v1:") && row.evidence_id)
+            ? decryptField("evidence", "evidence_name", row.evidence_id, row.evidence_name)
+            : row.evidence_name,
+        case_title: (typeof row.case_title === "string" && row.case_title.startsWith("v1:") && row.case_id)
+            ? decryptField("cases", "case_title", row.case_id, row.case_title)
+            : row.case_title,
+        resolved_by_name: (typeof row.resolved_by_name === "string" && row.resolved_by_name.startsWith("v1:") && row.resolved_by)
+            ? decryptField("users", "full_name", row.resolved_by, row.resolved_by_name)
+            : row.resolved_by_name
+    };
+};
 
 const getAllAlerts = async () => {
     const query = `
@@ -36,7 +66,7 @@ const getAllAlerts = async () => {
             a.detected_at DESC;
     `;
     const result = await pool.query(query);
-    return result.rows;
+    return result.rows.map(decryptAlertRow);
 };
 
 const getAlertStats = async () => {
@@ -61,50 +91,76 @@ const createAlert = async (alertData) => {
         return { ...existing, is_new: false, already_exists: true };
     }
 
-    const query = `
-        INSERT INTO tamper_alerts
-        (
-            evidence_id,
-            case_id,
-            alert_type,
-            severity,
-            stored_hash,
-            detected_hash,
-            file_path,
-            message,
-            status,
-            email_status,
-            email_attempts,
-            email_last_error,
-            email_sent_at
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'ACTIVE', $9, $10, $11, $12)
-        RETURNING *;
-    `;
-    const values = [
-        alertData.evidence_id,
-        alertData.case_id,
-        alertData.alert_type,
-        alertData.severity || 'CRITICAL',
-        alertData.stored_hash,
-        alertData.detected_hash,
-        alertData.file_path,
-        alertData.message,
-        alertData.email_status || 'PENDING',
-        alertData.email_attempts || 0,
-        alertData.email_last_error || null,
-        alertData.email_sent_at || null
-    ];
+    const client = await pool.connect();
     try {
-        const result = await pool.query(query, values);
-        return { ...result.rows[0], is_new: true };
+        await client.query("BEGIN;");
+        const seqRes = await client.query("SELECT nextval('public.tamper_alerts_alert_id_seq') AS next_id;");
+        const nextAlertId = parseInt(seqRes.rows[0].next_id, 10);
+
+        const encMsg = encryptField("tamper_alerts", "message", nextAlertId, alertData.message);
+        const encFilePath = encryptField("tamper_alerts", "file_path", nextAlertId, alertData.file_path);
+        const encEmailErr = encryptField("tamper_alerts", "email_last_error", nextAlertId, alertData.email_last_error);
+        const filePathBidx = computeBlindIndex(alertData.file_path);
+
+        const query = `
+            INSERT INTO tamper_alerts
+            (
+                alert_id,
+                evidence_id,
+                case_id,
+                alert_type,
+                severity,
+                stored_hash,
+                detected_hash,
+                file_path,
+                message,
+                status,
+                email_status,
+                email_attempts,
+                email_last_error,
+                email_sent_at,
+                file_path_bidx,
+                old_message,
+                old_file_path,
+                old_email_last_error
+            )
+            OVERRIDING SYSTEM VALUE
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'ACTIVE', $10, $11, $12, $13, $14, $15, $16, $17)
+            RETURNING *;
+        `;
+        const values = [
+            nextAlertId,
+            alertData.evidence_id,
+            alertData.case_id,
+            alertData.alert_type,
+            alertData.severity || 'CRITICAL',
+            alertData.stored_hash,
+            alertData.detected_hash,
+            encFilePath,
+            encMsg,
+            alertData.email_status || 'PENDING',
+            alertData.email_attempts || 0,
+            encEmailErr,
+            alertData.email_sent_at || null,
+            filePathBidx,
+            alertData.message,
+            alertData.file_path,
+            alertData.email_last_error || null
+        ];
+
+        const result = await client.query(query, values);
+        await client.query("COMMIT;");
+        return { ...decryptAlertRow(result.rows[0]), is_new: true };
     } catch (err) {
+        await client.query("ROLLBACK;");
         // Unique violation (Postgres error 23505): partial unique index idx_active_tamper_alerts_unique
         if (err.code === "23505") {
             const conflictExisting = await findActiveAlert(alertData.evidence_id, alertData.alert_type, alertData.file_path);
             return conflictExisting ? { ...conflictExisting, is_new: false, already_exists: true } : null;
         }
         throw err;
+    } finally {
+        client.release();
     }
 };
 
@@ -136,6 +192,7 @@ const findActiveAlert = async (evidenceId, alertType, filePath = null) => {
         `;
         params = [evidenceId, alertType];
     } else if (filePath) {
+        const filePathBidx = computeBlindIndex(filePath);
         query = `
             SELECT 
                 alert_id,
@@ -154,10 +211,12 @@ const findActiveAlert = async (evidenceId, alertType, filePath = null) => {
                 email_sent_at,
                 detected_at
             FROM tamper_alerts 
-            WHERE evidence_id IS NULL AND alert_type = $1 AND file_path = $2 AND status = 'ACTIVE'
+            WHERE evidence_id IS NULL AND alert_type = $1 
+              AND (file_path_bidx = $2 OR file_path = $3) 
+              AND status = 'ACTIVE'
             LIMIT 1;
         `;
-        params = [alertType, filePath];
+        params = [alertType, filePathBidx, filePath];
     } else {
         query = `
             SELECT 
@@ -184,16 +243,18 @@ const findActiveAlert = async (evidenceId, alertType, filePath = null) => {
     }
 
     const result = await pool.query(query, params);
-    return result.rows[0];
+    return decryptAlertRow(result.rows[0]);
 };
 
 const updateAlertEmailDispatch = async (alertId, { email_status, email_attempts, email_last_error, email_sent_at }) => {
+    const encEmailErr = email_last_error ? encryptField("tamper_alerts", "email_last_error", alertId, email_last_error) : null;
     const query = `
         UPDATE tamper_alerts
         SET email_status = COALESCE($2, email_status),
             email_attempts = COALESCE($3, email_attempts),
             email_last_error = $4,
-            email_sent_at = COALESCE($5, email_sent_at)
+            old_email_last_error = $5,
+            email_sent_at = COALESCE($6, email_sent_at)
         WHERE alert_id = $1
         RETURNING *;
     `;
@@ -201,11 +262,12 @@ const updateAlertEmailDispatch = async (alertId, { email_status, email_attempts,
         alertId,
         email_status,
         email_attempts,
-        email_last_error,
+        encEmailErr,
+        email_last_error || null,
         email_sent_at
     ];
     const result = await pool.query(query, values);
-    return result.rows[0];
+    return decryptAlertRow(result.rows[0]);
 };
 
 const getUnsentActiveAlerts = async (maxAttempts = 5) => {
@@ -224,21 +286,23 @@ const getUnsentActiveAlerts = async (maxAttempts = 5) => {
         ORDER BY a.alert_id ASC;
     `;
     const result = await pool.query(query, [maxAttempts]);
-    return result.rows;
+    return result.rows.map(decryptAlertRow);
 };
 
 const resolveAlert = async (alertId, userId, notes) => {
+    const encNotes = notes ? encryptField("tamper_alerts", "resolution_notes", alertId, notes) : null;
     const query = `
         UPDATE tamper_alerts
         SET status = 'RESOLVED',
             resolved_by = $2,
             resolved_at = CURRENT_TIMESTAMP,
-            resolution_notes = $3
+            resolution_notes = $3,
+            old_resolution_notes = $4
         WHERE alert_id = $1
         RETURNING *;
     `;
-    const result = await pool.query(query, [alertId, userId, notes || 'Resolved by administrator']);
-    return result.rows[0];
+    const result = await pool.query(query, [alertId, userId, encNotes, notes || 'Resolved by administrator']);
+    return decryptAlertRow(result.rows[0]);
 };
 
 module.exports = {
@@ -248,5 +312,6 @@ module.exports = {
     findActiveAlert,
     updateAlertEmailDispatch,
     getUnsentActiveAlerts,
-    resolveAlert
+    resolveAlert,
+    decryptAlertRow
 };

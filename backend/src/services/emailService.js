@@ -4,6 +4,7 @@ const dotenv = require("dotenv");
 const nodemailer = require("nodemailer");
 const pool = require("../config/db");
 const auditService = require("./auditService");
+const { decryptField } = require("../utils/fieldEncryption");
 
 /**
  * Escapes dynamic string values to prevent HTML injection in emails.
@@ -111,7 +112,7 @@ const resolveRecipientEmail = async () => {
 
     try {
         const query = `
-            SELECT email, full_name 
+            SELECT user_id, email, full_name 
             FROM users 
             WHERE role_id = 1 AND is_active = TRUE AND email IS NOT NULL AND email != ''
             ORDER BY user_id ASC 
@@ -119,7 +120,11 @@ const resolveRecipientEmail = async () => {
         `;
         const res = await pool.query(query);
         if (res.rows.length > 0 && res.rows[0].email) {
-            return res.rows[0].email.trim();
+            const row = res.rows[0];
+            const plainEmail = (typeof row.email === "string" && row.email.startsWith("v1:"))
+                ? decryptField("users", "email", row.user_id, row.email)
+                : row.email;
+            return plainEmail.trim();
         }
     } catch (dbErr) {
         console.warn("[EmailService] Failed to query admin email from database:", dbErr.message);

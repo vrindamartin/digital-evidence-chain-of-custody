@@ -918,5 +918,6 @@ module.exports = {
     scanUnregisteredFiles,
     retryUnsentAlertEmails,
     resolveAlert,
-    getIsScanRunning
+    getIsScanRunning,
+    resolveEvidenceFilePath
 };

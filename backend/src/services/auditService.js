@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const pool = require("../config/db");
+const { encryptField, decryptField } = require("../utils/fieldEncryption");
 
 /**
  * Computes a deterministic SHA-256 hash for an audit log entry.
@@ -39,6 +40,7 @@ const computeAuditEntryHash = (prevHash, entry) => {
 
 /**
  * Creates an append-only audit log chained cryptographically to the preceding record.
+ * Details are encrypted via AES-256-GCM and hashed as ciphertext under hash_version: 2.
  */
 const createAuditLog = async (
     userId,
@@ -70,12 +72,15 @@ const createAuditLog = async (
         const nextAuditId = parseInt(seqRes.rows[0].next_id, 10);
         const createdAt = new Date();
 
+        const encDetails = encryptField("audit_logs", "details", nextAuditId, details);
+
+        // Under hash_version: 2, hash is computed over the stored ciphertext encDetails
         const entryHash = computeAuditEntryHash(prevHash, {
             audit_id: nextAuditId,
             user_id: userId,
             evidence_id: evidenceId,
             action,
-            details,
+            details: encDetails,
             created_at: createdAt
         });
 
@@ -87,12 +92,14 @@ const createAuditLog = async (
                 evidence_id,
                 action,
                 details,
+                old_details,
                 created_at,
                 prev_hash,
-                entry_hash
+                entry_hash,
+                hash_version
             )
             OVERRIDING SYSTEM VALUE
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 2)
             RETURNING *;
         `;
 
@@ -101,6 +108,7 @@ const createAuditLog = async (
             userId,
             evidenceId,
             action,
+            encDetails,
             details,
             createdAt,
             prevHash,
@@ -110,7 +118,10 @@ const createAuditLog = async (
         const result = await client.query(insertQuery, values);
         await client.query("COMMIT;");
 
-        return result.rows[0];
+        return {
+            ...result.rows[0],
+            details // return decrypted details to caller
+        };
     } catch (err) {
         await client.query("ROLLBACK;");
         throw err;
@@ -122,6 +133,8 @@ const createAuditLog = async (
 /**
  * Verifies the entire cryptographic integrity of the audit_logs hash chain.
  * Detects modified contents, deleted records, or reordered entries.
+ *
+ * Supports both hash_version 1 (decrypted plaintext) and hash_version 2 (ciphertext) seamlessly.
  *
  * @returns {Promise<Object>} Verification result
  */
@@ -135,7 +148,8 @@ const verifyAuditLogChain = async () => {
             details,
             created_at,
             prev_hash,
-            entry_hash
+            entry_hash,
+            hash_version
         FROM audit_logs
         ORDER BY audit_id ASC;
     `;
@@ -167,11 +181,35 @@ const verifyAuditLogChain = async () => {
         }
 
         // 2. Recompute and verify entry_hash from row data
-        const computedHash = computeAuditEntryHash(row.prev_hash, row);
+        let computedHash;
+        if (row.hash_version === 2) {
+            // hash_version 2: verified directly over stored ciphertext
+            computedHash = computeAuditEntryHash(row.prev_hash, row);
+        } else {
+            // hash_version 1: decrypt stored details and verify vs original plaintext hash
+            let plainDetails;
+            try {
+                plainDetails = (typeof row.details === "string" && row.details.startsWith("v1:"))
+                    ? decryptField("audit_logs", "details", row.audit_id, row.details)
+                    : row.details;
+            } catch (decErr) {
+                return {
+                    valid: false,
+                    reason: `Audit log entry tampered at audit_id ${row.audit_id}: decryption authentication failed (${decErr.message}). Ciphertext was modified or corrupted.`,
+                    broken_audit_id: row.audit_id
+                };
+            }
+
+            computedHash = computeAuditEntryHash(row.prev_hash, {
+                ...row,
+                details: plainDetails
+            });
+        }
+
         if (row.entry_hash !== computedHash) {
             return {
                 valid: false,
-                reason: `Audit log entry tampered at audit_id ${row.audit_id}: stored entry_hash (${row.entry_hash?.substring(0, 16)}...) does not match recomputed hash (${computedHash.substring(0, 16)}...). Row content was modified.`,
+                reason: `Audit log entry tampered at audit_id ${row.audit_id} (hash_version: ${row.hash_version || 1}): stored entry_hash (${row.entry_hash?.substring(0, 16)}...) does not match recomputed hash (${computedHash.substring(0, 16)}...). Row content was modified.`,
                 broken_audit_id: row.audit_id,
                 storedEntryHash: row.entry_hash,
                 computedEntryHash: computedHash
@@ -205,9 +243,8 @@ const getAuditLogs = async (evidenceId) => {
     const query = `
         SELECT
             a.audit_id,
-            a.evidence_id,
             a.user_id,
-            COALESCE(u.full_name, 'SYSTEM') AS user_name,
+            COALESCE(u.full_name, 'SYSTEM') AS full_name,
             COALESCE(u.employee_id, 'SYSTEM') AS employee_id,
             a.action,
             a.details,
@@ -222,7 +259,21 @@ const getAuditLogs = async (evidenceId) => {
     `;
 
     const result = await pool.query(query, [evidenceId]);
-    return result.rows;
+    return result.rows.map(row => {
+        const audit_id = row.audit_id;
+        return {
+            ...row,
+            details: (typeof row.details === "string" && row.details.startsWith("v1:"))
+                ? decryptField("audit_logs", "details", audit_id, row.details)
+                : row.details,
+            full_name: (typeof row.full_name === "string" && row.full_name.startsWith("v1:") && row.user_id)
+                ? decryptField("users", "full_name", row.user_id, row.full_name)
+                : row.full_name,
+            employee_id: (typeof row.employee_id === "string" && row.employee_id.startsWith("v1:") && row.user_id)
+                ? decryptField("users", "employee_id", row.user_id, row.employee_id)
+                : row.employee_id
+        };
+    });
 };
 
 module.exports = {
