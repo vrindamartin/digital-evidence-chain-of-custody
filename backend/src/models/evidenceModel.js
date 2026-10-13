@@ -110,6 +110,10 @@ const getEvidenceById = async (evidenceId) => {
         SELECT
             evidence_id,
             evidence_number,
+            case_id,
+            evidence_name,
+            evidence_type,
+            description,
             file_name,
             file_path,
             file_hash,

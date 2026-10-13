@@ -174,6 +174,44 @@ node src/utils/testEmailNotification.js
 4. To test tampering in a sandbox environment:
    - Temporarily rename or edit the file in `backend/uploads/` or `backend/uploads/encrypted/`.
    - Wait up to 60 seconds for the scheduled integrity sweep (or click **Verify Integrity**).
-   - The system detects the anomaly, logs a `TAMPER_DETECTED` audit event, displays a red banner in the **Alert Center**, and sends a tamper alert email.
+   - The system detects the anomaly, logs a `TAMPER_DETECTED` audit event, displays an incident card in the **Alert Center**, and sends a tamper alert email.
 5. Log in as **System Administrator** (`POL2026002`), navigate to **⚠️ Tamper Alerts**, review the incident, and click **Resolve Alert** with resolution remarks.
+
+---
+
+## Live Presentation Tamper Detection & Reset Demo Sequence
+
+For project presentations and demonstrations, use the dedicated safe tamper trigger and reset utilities:
+
+### Safety Guarantees
+- **Strict Exhibit Restriction**: Restricted solely to designated test exhibit **`EV-2026-012`** (`evidence_id: 14`).
+- **Production Guard**: Both scripts immediately abort if `NODE_ENV === 'production'`.
+- **Zero Real Data Corruption**: Backs up intact ciphertext to `scratch/backups/` and verifies 100% bit-for-bit restoration.
+
+### Step-by-Step Presentation Flow
+
+1. **Step 1: Trigger Tamper (Induce single-byte ciphertext corruption)**
+   ```bash
+   node backend/src/utils/demoTamperAlert.js --tamper-only
+   ```
+   - Corrupts byte 0 of `EV-2026-012`'s `.enc` file.
+   - Triggers cryptographic verification, detecting `CORRUPTED_CIPHERTEXT` (AES-GCM authentication failure).
+   - Generates an immutable `TAMPER_DETECTED` audit log and dispatches security alert email via Ethereal sandbox.
+   - Leaves exhibit in tampered state and outputs an Ethereal web preview URL.
+
+2. **Step 2: Present Live Alert & Notification**
+   - Navigate to the **Alert Center** in your browser: `http://localhost:5173/alerts`.
+   - Point out the active **CRITICAL** incident card for `EV-2026-012`.
+   - Open the Ethereal web preview URL in your browser to display the tamper email notification.
+
+3. **Step 3: Reset Exhibit to Intact State**
+   ```bash
+   node backend/src/utils/resetDemoTamper.js
+   ```
+   - Restores the original `.enc` file bit-for-bit from `scratch/backups/`.
+   - Marks the active demo alert as `RESOLVED` in PostgreSQL under System Administrator credentials.
+   - Runs post-reset cryptographic scan confirming status **`INTACT`** with zero new alerts.
+
+4. **Step 4: Verify Clean State**
+   - Refresh `http://localhost:5173/alerts` to show the incident moved to **Resolved** and the system clean.
 

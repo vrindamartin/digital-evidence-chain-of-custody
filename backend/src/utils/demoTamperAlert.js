@@ -206,41 +206,51 @@ async function runSafeDemo() {
         }
 
     } finally {
-        // Step 6: Restore original .enc from backup
-        console.log("--------------------------------------------------------------------------------");
-        console.log("STEP 6: Restoring original .enc file from backup and verifying INTACT...");
-        console.log("--------------------------------------------------------------------------------");
-        fs.copyFileSync(backupFilePath, encFilePath);
-        const restoredBytes = fs.readFileSync(encFilePath);
-        const restoredHash = crypto.createHash("sha256").update(restoredBytes).digest("hex");
+        const isTamperOnlyMode = process.argv.includes("--tamper-only") || process.argv.includes("--no-restore");
 
-        console.log(`[Restore] Restored bytes: ${restoredBytes.length} bytes`);
-        console.log(`[Restore] Restored hash:  ${restoredHash}`);
-        console.log(`[Restore] Hash matches:   ${restoredHash === originalEncHash ? "YES (100% BIT-FOR-BIT IDENTICAL)" : "NO"}`);
+        if (isTamperOnlyMode) {
+            console.log("\n================================================================================");
+            console.log(">>> [LIVE DEMO MODE: --tamper-only ACTIVE]");
+            console.log(">>> Exhibit EV-2026-012 remains in TAMPERED state for live presentation.");
+            console.log(">>> View the active incident card in Alert Center: http://localhost:5173/alerts");
+            console.log(">>> To restore to pristine state, execute:");
+            console.log(">>>   node backend/src/utils/resetDemoTamper.js");
+            console.log("================================================================================\n");
+            delete process.env.DEMO_MAIL;
+        } else {
+            // Step 6: Restore original .enc from backup
+            console.log("--------------------------------------------------------------------------------");
+            console.log("STEP 6: Restoring original .enc file from backup and verifying INTACT...");
+            console.log("--------------------------------------------------------------------------------");
+            fs.copyFileSync(backupFilePath, encFilePath);
+            const restoredBytes = fs.readFileSync(encFilePath);
+            const restoredHash = crypto.createHash("sha256").update(restoredBytes).digest("hex");
 
-        // Re-run check on restored file
-        const postCheck = await alertService.checkEvidenceIntegrity(testEvidence);
-        console.log(`[Verification] Re-scan status: ${postCheck.status} (Successfully validated INTACT)\n`);
+            console.log(`[Restore] Restored bytes: ${restoredBytes.length} bytes`);
+            console.log(`[Restore] Restored hash:  ${restoredHash}`);
+            console.log(`[Restore] Hash matches:   ${restoredHash === originalEncHash ? "YES (100% BIT-FOR-BIT IDENTICAL)" : "NO"}`);
 
-        // Clean up backup file
-        try { fs.unlinkSync(backupFilePath); } catch (_) {}
+            // Re-run check on restored file
+            const postCheck = await alertService.checkEvidenceIntegrity(testEvidence);
+            console.log(`[Verification] Re-scan status: ${postCheck.status} (Successfully validated INTACT)\n`);
 
-        // Resolve the demo alert in database
-        if (demoAlertRecord) {
-            console.log(`[Cleanup] Resolving test demo alert #${demoAlertRecord.alert_id} in PostgreSQL...`);
-            const adminRes = await pool.query("SELECT user_id FROM users WHERE role_id = 1 AND is_active = TRUE LIMIT 1;");
-            const adminUserId = adminRes.rows[0] ? adminRes.rows[0].user_id : null;
-            await alertModel.resolveAlert(
-                demoAlertRecord.alert_id,
-                adminUserId,
-                "[SAFE DEMO] Test alert resolved automatically after tamper detection verification demo."
-            );
-            console.log(`[Cleanup] Alert #${demoAlertRecord.alert_id} marked as RESOLVED by User ID ${adminUserId}.\n`);
+            // Resolve the demo alert in database
+            if (demoAlertRecord) {
+                console.log(`[Cleanup] Resolving test demo alert #${demoAlertRecord.alert_id} in PostgreSQL...`);
+                const adminRes = await pool.query("SELECT user_id FROM users WHERE role_id = 1 AND is_active = TRUE LIMIT 1;");
+                const adminUserId = adminRes.rows[0] ? adminRes.rows[0].user_id : null;
+                await alertModel.resolveAlert(
+                    demoAlertRecord.alert_id,
+                    adminUserId,
+                    "[SAFE DEMO] Test alert resolved automatically after tamper detection verification demo."
+                );
+                console.log(`[Cleanup] Alert #${demoAlertRecord.alert_id} marked as RESOLVED by User ID ${adminUserId}.\n`);
+            }
+
+            // Remove demo transport setting
+            delete process.env.DEMO_MAIL;
+            console.log("[Cleanup] DEMO_MAIL transport unmounted.");
         }
-
-        // Remove demo transport setting
-        delete process.env.DEMO_MAIL;
-        console.log("[Cleanup] DEMO_MAIL transport unmounted.");
     }
 
     console.log("================================================================================");
