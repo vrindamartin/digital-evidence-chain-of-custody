@@ -907,12 +907,6 @@ const fetchAuditLogs = async () => {
     }
   };
 
-  const handleQuickLogin = (empId, pass) => {
-    setEmployeeId(empId);
-    setPassword(pass);
-    setMessage(`Prefilled credentials for ${empId}. Click "Sign In" or press Enter.`);
-  };
-
   // =========================
   // LOGOUT
   // =========================
@@ -2275,7 +2269,7 @@ const renderCasesPage = () => {
 
           <input
             type="text"
-            placeholder="e.g. admin, FOR2026001, POL2026002"
+            placeholder="Enter Employee ID, Username, or Email"
             value={employeeId}
             onChange={(e) =>
               setEmployeeId(e.target.value)
@@ -2289,7 +2283,7 @@ const renderCasesPage = () => {
 
           <input
             type="password"
-            placeholder="Enter password (e.g. Admin@123)"
+            placeholder="Enter password"
             value={password}
             onChange={(e) =>
               setPassword(e.target.value)
@@ -2299,6 +2293,7 @@ const renderCasesPage = () => {
 
           <button
             type="submit"
+            className="login-submit-btn"
             disabled={loading}
           >
             {loading
@@ -2317,42 +2312,26 @@ const renderCasesPage = () => {
         {/* QUICK DEMO LOGIN ACCOUNTS */}
         <div className="demo-accounts-box">
           <div className="demo-title">Quick Demo Login Accounts</div>
-          <div className="demo-presets-grid">
-            <button
-              type="button"
-              className="preset-btn"
-              onClick={() => handleQuickLogin("admin", "Admin@123")}
-            >
-              <span className="preset-title">🛡️ System Admin</span>
-              <span className="preset-desc">admin / Admin@123</span>
-            </button>
+          <div className="demo-roles-list">
+            <div className="demo-role-card">
+              <span className="demo-role-icon">🛡️</span>
+              <span className="demo-role-name">System Administrator</span>
+            </div>
 
-            <button
-              type="button"
-              className="preset-btn"
-              onClick={() => handleQuickLogin("FOR2026001", "Admin@123")}
-            >
-              <span className="preset-title">🔬 Forensic Analyst</span>
-              <span className="preset-desc">FOR2026001 / Admin@123</span>
-            </button>
+            <div className="demo-role-card">
+              <span className="demo-role-icon">🔬</span>
+              <span className="demo-role-name">Forensic Analyst</span>
+            </div>
 
-            <button
-              type="button"
-              className="preset-btn"
-              onClick={() => handleQuickLogin("POL2026001", "Admin@123")}
-            >
-              <span className="preset-title">👮 Police Officer</span>
-              <span className="preset-desc">POL2026001 / Admin@123</span>
-            </button>
+            <div className="demo-role-card">
+              <span className="demo-role-icon">👮</span>
+              <span className="demo-role-name">Police Officer</span>
+            </div>
 
-            <button
-              type="button"
-              className="preset-btn"
-              onClick={() => handleQuickLogin("CAS2026001", "Admin@123")}
-            >
-              <span className="preset-title">📂 Case Manager</span>
-              <span className="preset-desc">CAS2026001 / Admin@123</span>
-            </button>
+            <div className="demo-role-card">
+              <span className="demo-role-icon">📁</span>
+              <span className="demo-role-name">Case Manager</span>
+            </div>
           </div>
         </div>
 

@@ -507,6 +507,13 @@ The PostgreSQL database (`database/schema.sql`) consists of 9 normalized tables:
       - Executed two consecutive full vault scans 60 seconds apart (`15:16:31Z` and `15:17:32Z`), confirming 19 physical files intact, 3 legacy seeds exempted, 0 compromised files, and 0 new alerts.
       - Resolved alert `#685` under System Administrator (`user_id: 6`) with resolution note `"Baseline hash corrected from development placeholder; file verified against project backup, SHA-256 9690cbef...820f"`.
       - Verified final active alert count: **0 active alerts** across the entire digital evidence system.
+    - **Login Page UI Redesign & Credential Exposure Elimination**:
+      - Redesigned the Quick Demo Login Accounts section: eliminated all exposed passwords, demo usernames, and prefill buttons.
+      - Implemented 4 dedicated, rounded role showcase cards with distinct iconography (`🛡️ System Administrator`, `🔬 Forensic Analyst`, `👮 Police Officer`, `📁 Case Manager`).
+      - Structured role cards with consistent 14px vertical spacing (`gap: 14px`), 16-20px internal padding (`padding: 16px 20px`), subtle border styling, and hover feedback matching the dark charcoal/purple design system.
+      - Cleaned up form input placeholders to eliminate exposed sample passwords (`placeholder="Enter password"` and `placeholder="Enter Employee ID, Username, or Email"`).
+      - Added dedicated `.login-submit-btn` styling with consistent button height (48px), purple accent glow, and responsive mobile/tablet layout support down to 360px viewport widths.
+      - Preserved all authentication workflows, JWT handling, error messaging, and backend API compatibility.
 - **2026-10-08**:
   - **Field-Level Database Encryption & Blind Indexing Live Migration**:
     - Architected and implemented field-level AES-256-GCM database encryption across 8 sensitive tables (`users`, `cases`, `evidence`, `custody_logs`, `audit_logs`, `tamper_alerts`, `forensic_reports`, `autopsy_records`), preventing database-only administrators or compromised SQL dumps from reading sensitive PII, case titles, evidence descriptions, or forensic reports.
