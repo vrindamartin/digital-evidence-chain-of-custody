@@ -257,7 +257,7 @@ npm run dev
 | **UI Design System Redesign** | **Done** | `frontend/src/styles/theme.css`<br>`frontend/src/styles/layout.css`<br>`frontend/src/components/common/` | All 7 primary pages redesigned to dark theme card layouts with standard vertical labels and purple accents. |
 | **Alert Center UI Unification** | **Partial** | `frontend/src/components/AlertCenter.jsx` | Fully functional, but still relies on table layouts rather than the new `Card`, `Badge`, and `MetaItem` components. |
 | **Automated Unit & E2E Testing** | **Partial** | `backend/package.json`<br>`frontend/package.json`<br>`backend/src/utils/verifyReportRoles.js`<br>`backend/src/utils/verifyEvidenceRoles.js` | Verification suites for RBAC (reports & evidence) and monitor hardening active; no automated CI runner configured (Jest/Mocha/Vitest). |
-| **Live SMTP Production Testing** | **Verified (Demo)** | `backend/src/services/emailService.js`<br>`backend/src/utils/demoTamperAlert.js` | Verified end-to-end via Ethereal sandbox with live browser preview URLs; production delivery requires populated SMTP_PASS in `.env`. |
+| **Live SMTP Production Testing** | **Verified (Live & Demo)** | `backend/src/services/emailService.js`<br>`backend/src/utils/demoTamperAlert.js` | Verified end-to-end via live Gmail SMTP delivering to recipient `v***@gmail.com` (Message-ID: `<1945a25d-b886-6a59-2a3d-758778429238@cet.ac.in>`), with fallback to Ethereal sandbox preview URLs when `DEMO_MAIL=true`. |
 
 ### Evidence Decryption & Legacy Download Permission Matrix
 
@@ -493,6 +493,12 @@ The PostgreSQL database (`database/schema.sql`) consists of 9 normalized tables:
     - **Live SMTP Verification for Tamper Alerts**: Configured `backend/src/utils/demoTamperAlert.js` to dispatch security notifications via live configured SMTP (Gmail `smtp.gmail.com:587`), activating Ethereal strictly when `DEMO_MAIL=true`. Completed live rehearsal generating Alert #684 and Audit #444, delivering tamper notification email to `v***@gmail.com` (`Message-ID: <1945a25d-b886-6a59-2a3d-758778429238@cet.ac.in>`). Reset exhibit EV-2026-012 back to intact status via `resetDemoTamper.js`.
     - **Codebase Audit of `old_*` Columns**: Confirmed zero application queries read from `old_*` columns in production. Noted that model `INSERT` and `UPDATE` statements currently dual-write to `old_*` as backward fallback.
     - **Transactional `old_*` Drop Script (`dropOldColumns.js`)**: Created `backend/src/utils/dropOldColumns.js` executing in a single PostgreSQL transaction with strict pre-checks. Verified all 833 encrypted database values across 8 tables with 100% round-trip match (0 mismatches). Executed in dry-run mode (`ROLLBACK`) without altering schema.
+    - **Restoration of Historical Exhibits EV-2026-004 through 006**:
+      - Extracted original unencrypted JPEG files from project backup archive (`dig_new_5_10.zip`) into `backend/uploads/` using exact historical filenames (`1786094601398-...`, `1786094700265-...`, `1786095282566-...`).
+      - Verified pre-copy in-archive SHA-256 and post-copy on-disk SHA-256 (`9690cbefa96b7263f32273f3dc6abe71c7e47e4e47ec66818864c4fc9ced820f`), confirming 100% exact match against stored `file_hash` for `EV-2026-004` and `EV-2026-006`.
+      - Executed two consecutive full vault integrity scans 60 seconds apart (`14:50:10Z` and `14:51:10Z`), generating 0 new alerts across all 22 exhibits (18 physical files intact, 3 legacy catalog seeds exempted).
+      - Resolved alerts 680, 681, and 682 under System Administrator (`user_id: 6`) with resolution note `"Original files restored from project backup, SHA-256 verified"`.
+      - Verified final active alert count: exactly 1 (`Alert #685`, `HASH_MISMATCH` on legacy seed `EV-2026-005` due to historical database placeholder `file_hash = 'temporary_hash'`).
 - **2026-10-08**:
   - **Field-Level Database Encryption & Blind Indexing Live Migration**:
     - Architected and implemented field-level AES-256-GCM database encryption across 8 sensitive tables (`users`, `cases`, `evidence`, `custody_logs`, `audit_logs`, `tamper_alerts`, `forensic_reports`, `autopsy_records`), preventing database-only administrators or compromised SQL dumps from reading sensitive PII, case titles, evidence descriptions, or forensic reports.
