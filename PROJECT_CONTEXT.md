@@ -498,7 +498,15 @@ The PostgreSQL database (`database/schema.sql`) consists of 9 normalized tables:
       - Verified pre-copy in-archive SHA-256 and post-copy on-disk SHA-256 (`9690cbefa96b7263f32273f3dc6abe71c7e47e4e47ec66818864c4fc9ced820f`), confirming 100% exact match against stored `file_hash` for `EV-2026-004` and `EV-2026-006`.
       - Executed two consecutive full vault integrity scans 60 seconds apart (`14:50:10Z` and `14:51:10Z`), generating 0 new alerts across all 22 exhibits (18 physical files intact, 3 legacy catalog seeds exempted).
       - Resolved alerts 680, 681, and 682 under System Administrator (`user_id: 6`) with resolution note `"Original files restored from project backup, SHA-256 verified"`.
-      - Verified final active alert count: exactly 1 (`Alert #685`, `HASH_MISMATCH` on legacy seed `EV-2026-005` due to historical database placeholder `file_hash = 'temporary_hash'`).
+    - **EV-2026-005 Baseline Hash Correction & Zero Active Alerts Milestone**:
+      - Verified on-disk physical JPEG for `EV-2026-005` bit-for-bit matches project backup and git blob `cc0a137` (SHA-256 `9690cbefa96b7263f32273f3dc6abe71c7e47e4e47ec66818864c4fc9ced820f`, 3,590,885 bytes).
+      - Added `updateEvidenceFileHash(evidenceId, newFileHash)` to `backend/src/models/evidenceModel.js` updating only `file_hash` through the model layer without modifying any `old_*` columns.
+      - Updated `EV-2026-005` baseline `file_hash` and wrote immutable audit log entry (audit `#448`, action `BASELINE_HASH_CORRECTED`, user `6`) documenting correction from development placeholder `temporary_hash`.
+      - Regenerated HMAC-SHA256 signed integrity manifest (`manifest-latest.json`), confirming 100% database match with 0 mismatches and 0 deleted records.
+      - Executed cryptographic audit log chain verifier, validating all 434 historical and modern records as 100% intact.
+      - Executed two consecutive full vault scans 60 seconds apart (`15:16:31Z` and `15:17:32Z`), confirming 19 physical files intact, 3 legacy seeds exempted, 0 compromised files, and 0 new alerts.
+      - Resolved alert `#685` under System Administrator (`user_id: 6`) with resolution note `"Baseline hash corrected from development placeholder; file verified against project backup, SHA-256 9690cbef...820f"`.
+      - Verified final active alert count: **0 active alerts** across the entire digital evidence system.
 - **2026-10-08**:
   - **Field-Level Database Encryption & Blind Indexing Live Migration**:
     - Architected and implemented field-level AES-256-GCM database encryption across 8 sensitive tables (`users`, `cases`, `evidence`, `custody_logs`, `audit_logs`, `tamper_alerts`, `forensic_reports`, `autopsy_records`), preventing database-only administrators or compromised SQL dumps from reading sensitive PII, case titles, evidence descriptions, or forensic reports.

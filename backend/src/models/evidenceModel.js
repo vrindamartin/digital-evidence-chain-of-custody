@@ -163,10 +163,22 @@ const getAllEvidence = async () => {
     return result.rows.map(decryptEvidenceRow);
 };
 
+const updateEvidenceFileHash = async (evidenceId, newFileHash) => {
+    const query = `
+        UPDATE evidence
+        SET file_hash = $2
+        WHERE evidence_id = $1
+        RETURNING *;
+    `;
+    const result = await pool.query(query, [evidenceId, newFileHash]);
+    return decryptEvidenceRow(result.rows[0]);
+};
+
 module.exports = {
     createEvidence,
     getLatestEvidenceNumber,
     getEvidenceById,
     getAllEvidence,
+    updateEvidenceFileHash,
     decryptEvidenceRow
 };
