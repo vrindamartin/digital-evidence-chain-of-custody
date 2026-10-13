@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const pool = require("../config/db");
 const alertModel = require("../models/alertModel");
+const evidenceModel = require("../models/evidenceModel");
 const auditService = require("./auditService");
 const emailService = require("./emailService");
 const manifestService = require("./manifestService");
@@ -83,18 +84,24 @@ const getSystemAdminId = async () => {
 };
 
 const resolveEvidenceFilePath = (filePath) => {
-    if (!filePath) return null;
+    if (!filePath || typeof filePath !== "string") return null;
+    if (filePath.startsWith("v1:")) return null; // Guard against raw encrypted ciphertext
     if (path.isAbsolute(filePath) && fs.existsSync(filePath)) {
         return filePath;
     }
     const backendRoot = path.resolve(__dirname, "../../");
+    const base = path.basename(filePath);
     const candidates = [
         path.resolve(backendRoot, filePath),
-        path.resolve(backendRoot, "uploads", path.basename(filePath)),
-        path.resolve(backendRoot, "uploads/encrypted", path.basename(filePath)),
+        path.resolve(backendRoot, "uploads", base),
+        path.resolve(backendRoot, "uploads/encrypted", base),
+        path.resolve(backendRoot, "../uploads", base),
+        path.resolve(backendRoot, "../uploads/encrypted", base),
         path.resolve(process.cwd(), filePath),
-        path.resolve(process.cwd(), "uploads", path.basename(filePath)),
-        path.resolve(process.cwd(), "uploads/encrypted", path.basename(filePath))
+        path.resolve(process.cwd(), "uploads", base),
+        path.resolve(process.cwd(), "uploads/encrypted", base),
+        path.resolve(process.cwd(), "backend/uploads", base),
+        path.resolve(process.cwd(), "backend/uploads/encrypted", base)
     ];
     for (const candidate of candidates) {
         if (fs.existsSync(candidate)) {
@@ -107,12 +114,13 @@ const resolveEvidenceFilePath = (filePath) => {
 /**
  * Checks integrity of a single evidence record using streaming computation.
  *
- * @param {Object} evidenceItem Database row from evidence table
+ * @param {Object} rawEvidenceItem Database row from evidence table
  * @param {number|null} scanUserId ID of the user requesting the scan (null for background scheduler)
  * @param {number|null} preloadedAdminId Preloaded admin ID to avoid repeated DB lookups
  * @returns {Promise<Object>} Verification status object
  */
-const checkEvidenceIntegrity = async (evidenceItem, scanUserId = null, preloadedAdminId = null) => {
+const checkEvidenceIntegrity = async (rawEvidenceItem, scanUserId = null, preloadedAdminId = null) => {
+    const evidenceItem = evidenceModel.decryptEvidenceRow(rawEvidenceItem);
     const {
         evidence_id,
         case_id,
@@ -135,7 +143,7 @@ const checkEvidenceIntegrity = async (evidenceItem, scanUserId = null, preloaded
         (Number(evidence_id) <= 3 && encrypted_aes_key === "temporary_key")
     );
 
-    if (!fs.existsSync(absolutePath)) {
+    if (!absolutePath || !fs.existsSync(absolutePath)) {
         if (isVerifiedLegacySeed) {
             return {
                 status: "LEGACY_SEED",
@@ -431,16 +439,17 @@ const scanUnregisteredFiles = async (adminId) => {
 
     const uniqueDirs = Array.from(new Set(candidateDirs.map(d => path.normalize(d)))).filter(d => fs.existsSync(d));
 
-    const res = await pool.query("SELECT file_path, file_name FROM evidence;");
+    const res = await pool.query("SELECT evidence_id, file_path, file_name FROM evidence;");
     const registeredNames = new Set();
     for (const r of res.rows) {
-        if (r.file_name) {
-            registeredNames.add(path.basename(r.file_name).toLowerCase());
-            registeredNames.add(cleanEvidenceFileName(r.file_name).toLowerCase());
+        const decrypted = evidenceModel.decryptEvidenceRow(r);
+        if (decrypted.file_name) {
+            registeredNames.add(path.basename(decrypted.file_name).toLowerCase());
+            registeredNames.add(cleanEvidenceFileName(decrypted.file_name).toLowerCase());
         }
-        if (r.file_path) {
-            registeredNames.add(path.basename(r.file_path).toLowerCase());
-            registeredNames.add(cleanEvidenceFileName(r.file_path).toLowerCase());
+        if (decrypted.file_path) {
+            registeredNames.add(path.basename(decrypted.file_path).toLowerCase());
+            registeredNames.add(cleanEvidenceFileName(decrypted.file_path).toLowerCase());
         }
     }
 
@@ -691,7 +700,7 @@ const scanAllEvidenceIntegrity = async (scanUserId = null, forceFull = false) =>
             ORDER BY evidence_id ASC;
         `;
         const result = await pool.query(query);
-        const items = result.rows;
+        const items = result.rows.map(evidenceModel.decryptEvidenceRow);
         const scanResults = [];
 
         for (const item of items) {

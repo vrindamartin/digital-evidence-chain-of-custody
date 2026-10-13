@@ -1,5 +1,6 @@
 const pool = require("../config/db");
 const reportModel = require("../models/reportModel");
+const userModel = require("../models/userModel");
 const auditService = require("./auditService");
 
 /**
@@ -22,10 +23,10 @@ const checkReportAuthorRole = async (user, actionName = "report authoring", evid
         empId = user.employee_id || user.full_name || `User #${userId}`;
     } else if (typeof user === "number") {
         userId = user;
-        const uRes = await pool.query("SELECT user_id, employee_id, full_name, role_id FROM users WHERE user_id = $1;", [userId]);
-        if (uRes.rows.length > 0) {
-            roleId = uRes.rows[0].role_id;
-            empId = uRes.rows[0].employee_id || uRes.rows[0].full_name;
+        const u = await userModel.getUserById(userId);
+        if (u) {
+            roleId = u.role_id;
+            empId = u.employee_id || u.full_name || `User #${userId}`;
         }
     }
 

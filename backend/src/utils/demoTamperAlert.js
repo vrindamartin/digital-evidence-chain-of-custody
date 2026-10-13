@@ -25,6 +25,8 @@ const crypto = require("crypto");
 const pool = require("../config/db");
 const alertService = require("../services/alertService");
 const alertModel = require("../models/alertModel");
+const auditModel = require("../models/auditModel");
+const evidenceModel = require("../models/evidenceModel");
 const emailService = require("../services/emailService");
 
 // Production safety guard: Refuse to run in production
@@ -52,11 +54,10 @@ async function runSafeDemo() {
     process.env.DEMO_MAIL = "true";
 
     // Step 0: Fetch test exhibit metadata and verify strict exhibit identity
-    const evRes = await pool.query("SELECT * FROM evidence WHERE evidence_id = $1;", [TEST_EVIDENCE_ID]);
-    if (evRes.rows.length === 0) {
+    const testEvidence = await evidenceModel.getEvidenceById(TEST_EVIDENCE_ID);
+    if (!testEvidence) {
         throw new Error(`Test exhibit with evidence_id ${TEST_EVIDENCE_ID} not found in database!`);
     }
-    const testEvidence = evRes.rows[0];
 
     if (testEvidence.evidence_id !== TEST_EVIDENCE_ID || testEvidence.evidence_number !== EXPECTED_EVIDENCE_NUMBER) {
         console.error(`\nFATAL SAFETY VIOLATION: Target record is not the verified test exhibit!`);
@@ -143,7 +144,7 @@ async function runSafeDemo() {
             [TEST_EVIDENCE_ID]
         );
         if (alertRes.rows.length > 0) {
-            demoAlertRecord = alertRes.rows[0];
+            demoAlertRecord = alertModel.decryptAlertRow(alertRes.rows[0]);
             console.log(">>> [1/4] POSTGRESQL tamper_alerts ROW CREATED:");
             console.log(`    Alert ID:        #${demoAlertRecord.alert_id}`);
             console.log(`    Evidence ID:     ${demoAlertRecord.evidence_id} (${testEvidence.evidence_number})`);
@@ -164,7 +165,7 @@ async function runSafeDemo() {
             [TEST_EVIDENCE_ID]
         );
         if (auditRes.rows.length > 0) {
-            const auditLog = auditRes.rows[0];
+            const auditLog = auditModel.decryptAuditRow(auditRes.rows[0]);
             console.log(">>> [2/4] IMMUTABLE audit_logs ENTRY RECORDED:");
             console.log(`    Audit ID:        #${auditLog.audit_id}`);
             console.log(`    User ID:         ${auditLog.user_id}`);

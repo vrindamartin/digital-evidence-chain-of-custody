@@ -146,9 +146,32 @@ const getAllUsers = async () => {
     return users;
 };
 
+const getUserById = async (userId) => {
+    const query = `
+        SELECT 
+            u.user_id,
+            u.employee_id,
+            u.role_id,
+            u.password_hash,
+            u.full_name,
+            u.email,
+            u.phone_number,
+            u.is_active,
+            r.role_name
+        FROM users u
+        LEFT JOIN roles r ON u.role_id = r.role_id
+        WHERE u.user_id = $1
+        LIMIT 1;
+    `;
+    const result = await pool.query(query, [userId]);
+    return decryptUserRow(result.rows[0]);
+};
+
 module.exports = {
     createUser,
     getUserByEmployeeId,
+    getUserById,
     getAllUsers,
     decryptUserRow
 };
+
