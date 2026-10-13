@@ -162,3 +162,4 @@ if (require.main === module) {
 }
 
 module.exports = { resetDemoTamper };
+

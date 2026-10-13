@@ -26,6 +26,7 @@ const pool = require("../config/db");
 const alertService = require("../services/alertService");
 const alertModel = require("../models/alertModel");
 const auditModel = require("../models/auditModel");
+const auditService = require("../services/auditService");
 const evidenceModel = require("../models/evidenceModel");
 const emailService = require("../services/emailService");
 
@@ -50,8 +51,7 @@ async function runSafeDemo() {
     console.log("           DIG_EVI — TAMPER ALERT SYSTEM SAFE DEMONSTRATION                     ");
     console.log("================================================================================\n");
 
-    // Enable demo email transport exclusively for this test session
-    process.env.DEMO_MAIL = "true";
+    const useEthereal = String(process.env.DEMO_MAIL || "").toLowerCase() === "true";
 
     // Step 0: Fetch test exhibit metadata and verify strict exhibit identity
     const testEvidence = await evidenceModel.getEvidenceById(TEST_EVIDENCE_ID);
@@ -102,13 +102,13 @@ async function runSafeDemo() {
     let emailResult = null;
 
     try {
-        // Step 2: Configure Demo Mail Transport
+        // Step 2: Configure Mail Transport
         console.log("--------------------------------------------------------------------------------");
-        console.log("STEP 2: Initializing Ethereal demo mail transport (DEMO_MAIL=true)...");
+        console.log(`STEP 2: Initializing ${useEthereal ? "Ethereal demo mail transport (DEMO_MAIL=true)" : "configured live SMTP gateway"}...`);
         console.log("--------------------------------------------------------------------------------");
         const smtpConn = await emailService.verifySmtpConnection();
         console.log(`[Transport] Status:  ${smtpConn.message}`);
-        console.log(`[Transport] Mode:    Ethereal Sandbox (Real SMTP credentials untouched)\n`);
+        console.log(`[Transport] Mode:    ${useEthereal ? "Ethereal Sandbox (DEMO_MAIL=true)" : "Production/Live SMTP Gateway"}\n`);
 
         // Step 3: Flip 1 byte in the test record's .enc file
         console.log("--------------------------------------------------------------------------------");
@@ -131,7 +131,6 @@ async function runSafeDemo() {
         const scanResult = await alertService.checkEvidenceIntegrity(testEvidence);
         console.log("[Scan Result] Scan Status:        ", scanResult.status);
         console.log("[Scan Result] New Alert Created:  ", scanResult.new_alert_created);
-        emailResult = scanResult.email_dispatch;
 
         // Step 5: Show alert row created, audit log entry, UI appearance, and captured email
         console.log("\n--------------------------------------------------------------------------------");
@@ -155,6 +154,32 @@ async function runSafeDemo() {
             console.log(`    Stored Hash:     ${demoAlertRecord.stored_hash}`);
             console.log(`    Detected At:     ${demoAlertRecord.detected_at.toISOString()}`);
             console.log(`    Message:         ${demoAlertRecord.message}\n`);
+
+            // Dispatch notification email via configured transport
+            console.log(">>> Dispatching security notification email to System Administrator...");
+            emailResult = await emailService.sendTamperAlertEmail({
+                ...demoAlertRecord,
+                evidence_number: testEvidence.evidence_number,
+                evidence_name: testEvidence.evidence_name,
+                audit_user_id: null
+            });
+
+            const isSent = Boolean(emailResult && emailResult.sent);
+            await alertModel.updateAlertEmailDispatch(demoAlertRecord.alert_id, {
+                email_status: isSent ? "SENT" : "FAILED",
+                email_attempts: 1,
+                email_sent_at: isSent ? new Date() : null,
+                email_last_error: isSent ? null : (emailResult.error || emailResult.reason || "Dispatch failed")
+            });
+
+            if (isSent) {
+                await auditService.createAuditLog(
+                    null,
+                    demoAlertRecord.evidence_id,
+                    "EMAIL_ALERT_SENT",
+                    `[SYSTEM] Tamper alert notification email delivered to ${emailService.maskEmail(emailResult.recipient)} (attempt 1/5)`
+                );
+            }
         } else {
             console.warn(">>> [1/4] Warning: No active alert row found in tamper_alerts.");
         }
@@ -187,7 +212,7 @@ async function runSafeDemo() {
         // 5d. Captured Email Notification
         console.log(">>> [4/4] CAPTURED SECURITY NOTIFICATION EMAIL:");
         if (emailResult && emailResult.sent) {
-            console.log(`    Status:          SENT via Ethereal`);
+            console.log(`    Status:          SENT via ${emailResult.isEthereal ? "Ethereal Sandbox" : "Configured Live SMTP"}`);
             console.log(`    Recipient:       ${emailService.maskEmail(emailResult.recipient)}`);
             console.log(`    Subject:         ${emailResult.subject}`);
             console.log(`    Message ID:      ${emailResult.messageId}`);
@@ -197,12 +222,8 @@ async function runSafeDemo() {
                 console.log(`        ${emailResult.previewUrl}`);
                 console.log(`    ========================================================================\n`);
             }
-            console.log("    EMAIL BODY CONTENT SNIPPET:");
-            const lines = emailResult.text ? emailResult.text.split("\n").slice(0, 18) : [];
-            lines.forEach(l => console.log(`      | ${l}`));
-            console.log("      | [...remaining forensic body...]\n");
         } else {
-            console.log("    Status: Not dispatched or SMTP disabled.");
+            console.log(`    Status:          Failed to send or SMTP disabled: ${emailResult ? (emailResult.error || emailResult.reason) : "No result"}`);
         }
 
     } finally {
@@ -216,7 +237,6 @@ async function runSafeDemo() {
             console.log(">>> To restore to pristine state, execute:");
             console.log(">>>   node backend/src/utils/resetDemoTamper.js");
             console.log("================================================================================\n");
-            delete process.env.DEMO_MAIL;
         } else {
             // Step 6: Restore original .enc from backup
             console.log("--------------------------------------------------------------------------------");
